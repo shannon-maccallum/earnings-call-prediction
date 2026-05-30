@@ -1,0 +1,38 @@
+[
+  {
+    "symbol": "AAPL",
+    "quarter": "2024Q1",
+    "fiscalDateEnding": "2023-12-30",
+    "earnings_date": "2024-02-01",
+    "transcript": "Good afternoon, everyone. Thank you for joining Apple's first quarter fiscal 2024 earnings conference call. I'm Suhasini Chandramouli, Director of Investor Relations, and with me today is Tim Cook, Apple's CEO, and Luca Maestri, Apple's CFO. We are providing a presentation today that is available on our website with more detail than usual. As a reminder, a replay of today's call will be available on our website. Before I turn the call over to Tim, I would like to remind you that today's call contains forward-looking statements. Services revenue reached an all-time high of 23.1 billion dollars, growing 11% year over year. We are thrilled with our momentum and confident in the road ahead. Our installed base of active devices has now reached an all-time high across all products and all geographies. iPhone revenue came in at 69.7 billion dollars, roughly flat year over year. We continue to see a very high level of customer satisfaction with iPhone 15 lineup. Looking ahead, we are very confident in our pipeline and in the opportunities in front of us.",
+    "return_pct": -0.89,
+    "price_day0": 185.85,
+    "price_dayN": 184.18,
+    "return_window": 3,
+    "direction": 0
+  },
+  {
+    "symbol": "MSFT",
+    "quarter": "2024Q2",
+    "fiscalDateEnding": "2023-12-31",
+    "earnings_date": "2024-01-30",
+    "transcript": "Good afternoon. I'm Brett Iversen, Vice President of Investor Relations. Joining me on today's call are Satya Nadella, chairman and chief executive officer, Amy Hood, executive vice president and chief financial officer, and Alice Jolla, chief accounting officer. Revenue was 62 billion dollars and increased 18% and 16% in constant currency. Microsoft Cloud quarterly revenue was 33.7 billion dollars and grew 24% year over year. Azure and other cloud services revenue grew 28%. We saw strong execution across the company. Copilot is transforming how people work, and we are seeing great momentum. Capital expenditures including finance leases were 11.5 billion dollars to support our cloud and AI infrastructure. We expect the next quarter's revenue to be between 60 and 61 billion dollars.",
+    "return_pct": 2.74,
+    "price_day0": 404.87,
+    "price_dayN": 415.97,
+    "return_window": 3,
+    "direction": 1
+  },
+  {
+    "symbol": "META",
+    "quarter": "2024Q1",
+    "fiscalDateEnding": "2024-03-31",
+    "earnings_date": "2024-04-24",
+    "transcript": "Good afternoon and welcome to Meta's first quarter 2024 earnings conference call. I'm Ken Dorell, Vice President of Investor Relations. Joining me today to discuss our results are Mark Zuckerberg, CEO, and Susan Li, CFO. Revenue for the first quarter of 2024 was 36.5 billion dollars, up 27% year over year. Net income was 12.4 billion dollars, up 117% year over year. Our family daily active people metric was 3.24 billion on average for March 2024, an increase of 7% year over year. Total costs and expenses were 22.6 billion dollars. We expect second quarter 2024 total revenue to be in the range of 36.5 to 39 billion dollars. We continue to make progress with our AI investments and see long-term opportunity ahead. Capital expenditures will be significantly higher than previously anticipated as we accelerate our AI infrastructure build-out.",
+    "return_pct": -10.56,
+    "price_day0": 493.5,
+    "price_dayN": 441.38,
+    "return_window": 3,
+    "direction": 0
+  }
+]
