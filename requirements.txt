@@ -1,7 +1,0 @@
-pandas
-numpy
-yfinance
-requests
-scikit-learn
-jupyter
-notebook
