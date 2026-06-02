@@ -9,3 +9,4 @@ build/
 *.parquet
 data/raw/
 .DS_Store
+*.pt
