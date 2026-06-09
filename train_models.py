@@ -257,7 +257,7 @@ def evaluate_model(args):
             f"{row['correct']}/{row['total']} = {row['accuracy']:.2f}"
         )
 
-
+# make able to be run in terminal
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["train", "evaluate"], default="train")
