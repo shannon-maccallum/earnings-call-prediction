@@ -10,3 +10,7 @@ build/
 data/raw/
 .DS_Store
 *.pt
+checkpoints/
+logs/
+outputs/
+presentations/
