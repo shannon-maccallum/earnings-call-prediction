@@ -1,152 +1,171 @@
 # Earnings Call Transcript Predictor
 
-Predicting post-earnings stock returns from earnings call transcripts using FinBERT.
-
 **Shannon Maccallum | Intro to Deep Learning | University of Oregon**
 
----
+This project investigates whether the language in earnings call transcripts can predict short-term stock returns. The model takes an earnings call transcript as text and predicts the stock's 3-trading-day post-earnings return percentage. The final prediction is also converted into a simple trading signal: Buy, Sell, or Hold.
+
+The main result is honest rather than flashy: FinBERT can be fine-tuned for this task, and some train/test splits produce strong-looking results, but the dataset is too small for stable generalization. The first run I observed had very high signal and directional accuracy, but later runs were much weaker. That variance is an important conclusion of the project, not just a failure. With only 173 examples, a 34-sample test set can change dramatically depending on which examples land in it.
 
 ## Project Purpose
 
-Stock prices react immediately to earnings calls — but can we predict that reaction before the market fully prices it in? Executives choose their words carefully. Their tone, emphasis, and language around guidance, growth, and risk all carry signals — but those signals are buried in unstructured text.
+Earnings calls are one of the places where financial information and human language meet. Executives describe growth, risk, guidance, margins, demand, and uncertainty in ways that may contain signal beyond the raw numbers. This project asks whether a deep learning model can learn that signal from transcript text and predict the immediate stock reaction after earnings.
 
-This project investigates whether the specific wording used by executives during earnings calls can predict short-term stock returns using deep learning. The approach fine-tunes FinBERT — a version of BERT pre-trained on 4.9 billion tokens of financial text — to predict the 3-day post-earnings return percentage directly from transcript text. The model then converts predictions into Buy/Sell/Hold trading signals.
+I use FinBERT because it is a BERT model pretrained on financial text. Instead of using FinBERT for sentiment classification, I replace the sentiment classifier with a regression head that predicts a continuous return percentage. This makes the project a supervised regression problem:
 
-This interests me because finance is deeply human. Markets move on expectations, confidence, and fear — not just numbers. I want to quantify that human layer. The longer-term vision is a live interface that ingests transcripts in real time and generates trading signals as earnings calls happen.
-
----
+```text
+earnings call transcript -> FinBERT encoder -> Linear regression head -> return_pct
+```
 
 ## Dataset
 
-### Sources
-- **Transcripts:** Alpha Vantage API (`EARNINGS_CALL_TRANSCRIPT` endpoint), fetched and cached locally as JSON after the first call to avoid re-hitting the 25/day free tier limit.
-- **Returns:** Yahoo Finance via `yfinance`, computing the 3-day post-earnings return: `(price_day3 - price_day0) / price_day0 × 100`
+The dataset contains **173 earnings call transcripts** from large public companies across technology, finance, healthcare, consumer, and industrial/energy sectors. The files cover **2022 Q3 through 2024 Q3**. Each example is stored as a JSON file in:
 
-### Statistics
-- **148 transcripts** across 25 S&P 500 companies
-- **Date range:** 2022 Q3 through 2024 Q3
-- **Sectors:** Tech (AAPL, MSFT, GOOGL, NVDA, META), Finance (JPM, BAC, GS, V, MA), Healthcare (JNJ, PFE, UNH, ABBV, MRK), Consumer (AMZN, TSLA, MCD, NKE, SBUX), Energy/Industrial (XOM, CVX, HD, HON, UPS)
-
-### Target Variable
-`return_pct` — the percentage change in closing price from earnings day to 3 trading days later. This is a continuous float (e.g. `2.45` or `-3.71`). The 3-day window was chosen to capture short-term drift after the call while avoiding too much noise from unrelated market events.
-
-### Data Location
-Transcripts are stored in `notebooks/data/transcripts/` as individual JSON files named `{TICKER}_{QUARTER}.json`.
-
-### How to Collect Data
-```bash
-conda activate earnings-call-prediction
-jupyter notebook notebooks/data_demo.ipynb
+```text
+notebooks/data/transcripts/
 ```
 
----
+Each JSON file contains:
 
-## Model Architecture
+- `symbol`: ticker symbol
+- `quarter`: earnings quarter
+- `earnings_date`: date used for the return calculation
+- `transcript`: Alpha Vantage transcript speaker turns
+- `return_pct`: target variable
 
-### FinBERT Backbone
-FinBERT (ProsusAI) is BERT pre-trained on 4.9 billion tokens of financial text — news articles, earnings filings, and analyst reports. It understands earnings call language out of the box: terms like "margin compression", "sequential growth", and "guidance revision" are already encoded in its weights.
+Transcripts were collected from the Alpha Vantage `EARNINGS_CALL_TRANSCRIPT` endpoint and cached locally to avoid repeated API calls. Returns were collected with `yfinance`. The target is:
 
-### From Sentiment Classifier to Return Predictor
-FinBERT was originally designed to classify text as positive, negative, or neutral sentiment. To repurpose it for return prediction, we intercept the rich internal representation it builds before making that classification decision.
-
-Specifically, FinBERT's encoder produces a **768-dimensional vector** for the special `[CLS]` token — a numerical fingerprint of the entire transcript, where each of the 768 dimensions captures some learned aspect of the financial language. We then apply a single **Linear(768→1)** layer on top of this vector.
-
-This linear layer performs a matrix multiplication: it has 768 learned weights (one per dimension of the transcript vector) plus a bias term. The prediction is computed as:
-
-```
-predicted_return = w[0]*v[0] + w[1]*v[1] + ... + w[767]*v[767] + bias
+```text
+return_pct = (close_price_day3 - close_price_day0) / close_price_day0 * 100
 ```
 
-Where `v` is the 768-dim transcript vector and `w` are the learned weights. During training the model learns which combinations of those 768 dimensions are predictive of post-earnings returns — for example, high values in dimensions that encode confident forward guidance language might push the prediction positive, while dimensions encoding cautious risk language push it negative.
+The median transcript length is about 8,100 words, but FinBERT can only accept 512 tokens. This means the current model uses the beginning of each transcript, which usually includes the operator introduction and early prepared remarks.
 
-### Training: Gradual Unfreezing
-Standard fine-tuning failed on this small dataset — the model either overfitted badly at higher epochs or predicted near-zero for everything. The solution was gradual unfreezing (Howard & Ruder, 2018):
+## Repository Structure
 
-**Phase 1 (2 epochs, lr=1e-3):** Freeze all of FinBERT's 110 million parameters. Train only the new Linear(768→1) layer. This forces the head to learn how to read FinBERT's existing representations without overwriting the pretrained financial language knowledge.
+```text
+earnings_transcript_predictor/
+  dataset.py        # Dataset and transcript loading utilities
+  models.py         # FinBERT regression model
+  data_loaders.py   # Alpha Vantage and yfinance helpers
+  evaluation.py     # Shared metrics
 
-**Phase 2 (3 epochs, lr=2e-5):** Unfreeze all parameters. Fine-tune the full model at a very low learning rate. FinBERT makes small targeted adjustments to its representations for our specific task rather than relearning from scratch.
+dataset.py          # Compatibility wrapper for assignment requirements
+models.py           # Compatibility wrapper for assignment requirements
+train_model.py      # Training script
+evaluate_model.py   # Evaluation script
+notebooks/data_demo.ipynb
+notebooks/model.ipynb
+evaluation.ipynb
+```
 
-### Optimizer: AdamW
-AdamW is an optimizer that adjusts how much each of the model's 110 million parameters updates after every batch, maintaining a separate adaptive learning rate per parameter and applying weight decay (0.01) to prevent overfitting on our small dataset. Gradient clipping (max norm 1.0) is applied before each weight update to prevent unstable training during FinBERT fine-tuning.
+## Setup
 
-### Loss Function
-Mean Squared Error (MSE) — measures how far predicted return percentages are from actual returns. MSE penalizes large errors more than small ones, which is appropriate here since large prediction errors are especially costly for trading decisions.
-
----
-
-## How to Train
-
-### Setup
 ```bash
 git clone https://github.com/shannon-maccallum/earnings-call-prediction.git
 cd earnings-call-prediction
+python -m venv venv
+source venv/bin/activate
 pip install -e .
 ```
 
-### Train locally
-```bash
-python scripts/train_model.py \
-    --data_dir notebooks/data/transcripts \
-    --output_dir checkpoints/
+On Talapas, the project path is:
+
+```text
+/gpfs/home/smaccall/earnings-call-prediction/
 ```
 
-### Train on Talapas (A100 GPU)
+## Training
+
+The training script uses an 80/20 split with a fixed random seed. By default, it uses gradual unfreezing:
+
+1. Freeze FinBERT and train only the new regression head for 2 epochs.
+2. Unfreeze FinBERT and fine-tune the full model for 3 epochs with a small learning rate.
+
+This is more appropriate for a small dataset than immediately updating all 110M FinBERT parameters.
+
+Run locally or on an interactive GPU node:
+
+```bash
+python train_model.py \
+  --data_dir notebooks/data/transcripts \
+  --output_dir checkpoints/ \
+  --seed 42
+```
+
+Run on Talapas:
+
 ```bash
 sbatch train.sh
-squeue -u smaccall       # monitor job
-tail -f logs/train_*.out  # view output
 ```
 
-### Trained model weights
-```
+The trained model weights are saved to:
+
+```text
+checkpoints/best_model.pt
 /gpfs/home/smaccall/earnings-call-prediction/checkpoints/best_model.pt
 ```
 
----
+The training history is saved to:
+
+```text
+checkpoints/training_history.json
+```
+
+## Evaluation
+
+Evaluate a trained checkpoint with:
+
+```bash
+python evaluate_model.py \
+  --data_dir notebooks/data/transcripts \
+  --model_path checkpoints/best_model.pt \
+  --seed 42
+```
+
+The evaluation notebook, `evaluation.ipynb`, loads the trained model, runs predictions on the held-out test set, computes metrics, and creates the plots used in this README.
+
+The proposed metrics are:
+
+- **MAE**: mean absolute error in return percentage points
+- **RMSE**: root mean squared error
+- **Prediction bias**: average prediction error
+- **Directional accuracy**: whether predicted and actual returns have the same sign
+- **Signal accuracy**: whether predicted and actual Buy/Sell/Hold labels match at thresholds such as +/-0.5%, +/-1%, and +/-2%
 
 ## Results
 
-### Key Metrics (test set, n=29, 80/20 split)
+Because the dataset is small, results are unstable across runs. The best observed run looked strong, but repeated runs showed that the result depends heavily on the random split.
 
-| Metric | Best Run | Typical Range |
-|--------|----------|---------------|
-| Signal Accuracy (±0.5%) | **83%** | 45–83% |
-| Directional Accuracy | **90%** | 59–90% |
-| Mean Absolute Error | **1.57%** | 1.57–4.13% |
-| RMSE | **2.04%** | 2.04–6.24% |
-| Prediction Bias | **0.35%** | varies |
+| Metric | Best Observed Run | Typical Observed Range |
+|---|---:|---:|
+| Signal Accuracy (+/-0.5%) | 83% | 45-83% |
+| Directional Accuracy | 90% | 59-90% |
+| MAE | 1.57% | 1.57-4.13% |
+| RMSE | 2.04% | 2.04-6.24% |
 
-Random baseline = 50%. The best run significantly beats random; typical runs beat random at wider thresholds.
+The best run should be interpreted as a best-case scenario, not as the model's expected real-world accuracy. A 34-sample test set is small enough that a few lucky or unlucky examples can swing the accuracy by a large amount.
 
-### Signal Accuracy by Threshold (best run)
+## Visualization
 
-| Threshold | Accuracy |
-|-----------|----------|
-| ±0.5% | **83%** |
-| ±1.0% | 76% |
-| ±2.0% | 62% |
-| ±3.0% | 69% |
+The evaluation notebook produces:
 
-### Visualization
-See `notebooks/evaluation.ipynb` for all plots including:
-- Predicted vs actual return scatter plot
-- Per-sample actual vs predicted bar chart
-- Distribution of prediction errors
-- Signal accuracy by threshold bar chart
+- predicted vs. actual return scatter plot
+- actual vs. predicted bar chart for each test example
+- prediction error histogram
+- signal accuracy by threshold chart
 
----
+After running `evaluation.ipynb`, the signal accuracy chart is saved as:
 
-## Limitations and Discussion
+```text
+signal_accuracy.png
+```
 
-**Small dataset:** 148 transcripts with a 29-sample test set is the most significant limitation. Results vary substantially across runs (45–83% signal accuracy) because with only 29 test samples, a few different samples in the split can swing accuracy by 15–20 percentage points. This makes it difficult to draw firm conclusions about generalization. A minimum of 1,000+ samples would be needed for stable evaluation.
+## Limitations
 
-**Data collection issues:** 74 transcripts were accidentally saved as empty API error responses early in collection before a validity check was added. These were detected and removed, but reduced the effective dataset size significantly. More careful pipeline design from the start would have avoided this.
+The biggest limitation is dataset size. FinBERT is a large pretrained model, but 173 labeled examples is still very small for supervised fine-tuning. Gradual unfreezing helps reduce overfitting, but it does not create new information. Adding 25 more transcripts helped slightly, but a truly stable evaluation would likely need hundreds or thousands more examples.
 
-**Return window:** The 3-day return window captures short-term drift but may include noise from market-wide events unrelated to the earnings call. If the call happens after market close, same-day price reactions are partially captured in the day 0 close already.
+The second limitation is truncation. Full earnings calls are thousands of words, while BERT can only process 512 tokens. Important information in CFO remarks and analyst Q&A is probably excluded. A better version would use a sliding-window or hierarchical model that reads the full transcript.
 
-**No consensus estimates:** The model predicts raw return, not surprise relative to analyst expectations. A stock can drop even after a strong earnings beat if expectations were too high. Incorporating EPS surprise (actual minus estimated EPS) as a second input would likely improve signal quality significantly — this is the most important next step.
+The third limitation is that the target is raw stock return, not earnings surprise. A stock can fall after good earnings if investors expected even better results. Adding analyst consensus estimates, EPS surprise, revenue surprise, and market return controls would make the target more financially meaningful.
 
-**Truncation:** FinBERT accepts a maximum of 512 tokens, but full earnings call transcripts are typically 5,000–15,000 words. Only the first ~400 words are used, which captures the operator introduction and early CEO remarks but misses the CFO financial details and analyst Q&A — sections that may contain important signals.
-
-**Future work:** Scale data collection via SEC EDGAR scraping (thousands of transcripts, free), add analyst consensus EPS as a second input feature, extend to full transcript length using a sliding window or hierarchical model, and build a live interface that ingests transcripts in real time.
-
+Overall, this project shows a working deep learning pipeline for earnings-call-based return prediction, but it also shows that the current dataset is not large enough to support a strong claim of predictive trading performance. The most defensible conclusion is that transcript language may contain useful information, but the current experiment is underpowered and needs more data and better financial controls before it could be used outside a class project.

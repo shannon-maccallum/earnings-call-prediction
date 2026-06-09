@@ -9,9 +9,7 @@
 #SBATCH --error=logs/train_%j.err
 
 source venv/bin/activate
-python scripts/train.py \
-    --epochs 5 \
-    --batch_size 16 \
-    --lr 2e-5 \
-    --return_window 3 \
+mkdir -p logs checkpoints
+python train_model.py \
+    --data_dir notebooks/data/transcripts \
     --output_dir checkpoints/
