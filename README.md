@@ -14,6 +14,8 @@ README.md
 dataset.py
 models.py
 train_models.py
+scripts/
+  build_pdf_dataset.py
 notebooks/
   data collection.ipynb
   data_demo.ipynb
@@ -50,6 +52,10 @@ Contains training and evaluation helpers:
 - checkpoint saving
 - MAE, RMSE, bias, directional accuracy, and Buy/Sell/Hold signal accuracy
 
+`scripts/build_pdf_dataset.py`
+
+Converts the cleaned quarterly earnings-call PDF archive into the same JSON format used by the model. It extracts transcript text from each PDF, reads the fiscal quarter and call date from the normalized filename/header, and uses Yahoo Finance to compute the 3-trading-day `return_pct` label.
+
 `notebooks/evaluation.ipynb`
 
 Loads a trained checkpoint, evaluates it on the held-out test split, and creates the final result charts.
@@ -66,7 +72,18 @@ Contains the original project notebooks and data:
 
 ## Dataset
 
-The dataset contains 173 earnings call transcripts from large public companies across technology, finance, healthcare, consumer, and industrial/energy sectors. The files cover 2022 Q3 through 2024 Q3.
+The original model dataset contains 173 earnings call transcripts from large public companies across technology, finance, healthcare, consumer, and industrial/energy sectors. The files cover 2022 Q3 through 2024 Q3.
+
+The expanded source archive contains cleaned quarterly earnings-call PDFs organized by ticker. To use the PDFs instead of the original Alpha Vantage JSON files, first convert them into model-ready JSON:
+
+```bash
+python scripts/build_pdf_dataset.py \
+  --pdf_root ~/Library/CloudStorage/OneDrive-UniversityOfOregon/transcripts \
+  --output_dir notebooks/data/pdf_transcripts \
+  --return_window 3
+```
+
+On Talapas, replace `--pdf_root` with the location where you copied the cleaned PDF archive.
 
 Each JSON file contains:
 
@@ -89,10 +106,12 @@ Install the needed packages in your Python environment, then run:
 ```bash
 python train_models.py \
   --mode train \
-  --data_dir notebooks/data/transcripts \
+  --data_dir notebooks/data/pdf_transcripts \
   --output_dir checkpoints \
   --seed 42
 ```
+
+To train on the smaller original dataset instead, use `--data_dir notebooks/data/transcripts`.
 
 The best model is saved to:
 
@@ -121,7 +140,7 @@ Or from the command line:
 ```bash
 python train_models.py \
   --mode evaluate \
-  --data_dir notebooks/data/transcripts \
+  --data_dir notebooks/data/pdf_transcripts \
   --model_path checkpoints/best_model.pt \
   --seed 42
 ```
