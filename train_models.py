@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 
-from dataset import EarningsDataset, load_records
+from dataset import ChunkedEarningsDataset, EarningsDataset, load_records
 from models import EarningsModel
 
 
@@ -90,7 +90,7 @@ def train_epoch(model, loader, optimizer, device, criterion):
 
 def eval_epoch(model, loader, device, criterion, n_test):
     model.eval()
-    val_loss, correct = 0, 0
+    val_loss, correct, total = 0, 0, 0
     with torch.no_grad():
         for batch in loader:
             input_ids = batch["input_ids"].to(device)
@@ -99,8 +99,9 @@ def eval_epoch(model, loader, device, criterion, n_test):
             preds = model(input_ids, attention_mask)
             val_loss += criterion(preds, labels).item()
             correct += ((preds >= 0) == (labels >= 0)).sum().item()
+            total += len(labels)
     rmse = (val_loss / len(loader)) ** 0.5
-    dir_acc = correct / n_test
+    dir_acc = correct / total
     return rmse, dir_acc
 
 
@@ -120,11 +121,26 @@ def run_phase(model, loader, eval_loader, optimizer, device, criterion, epochs, 
 
 def build_data_loaders(args):
     records = load_records(args.data_dir)
-    dataset = EarningsDataset(records, max_length=args.max_length)
-    n_test = max(1, int(len(dataset) * args.test_size))
-    n_train = len(dataset) - n_test
+    for index, record in enumerate(records):
+        record["_record_id"] = index
+
+    n_test = max(1, int(len(records) * args.test_size))
+    n_train = len(records) - n_test
     split_generator = torch.Generator().manual_seed(args.seed)
-    train_ds, test_ds = random_split(dataset, [n_train, n_test], generator=split_generator)
+    train_record_ds, test_record_ds = random_split(records, [n_train, n_test], generator=split_generator)
+    train_records = [records[i] for i in train_record_ds.indices]
+    test_records = [records[i] for i in test_record_ds.indices]
+
+    dataset_class = ChunkedEarningsDataset if args.chunks_per_transcript > 1 else EarningsDataset
+    dataset_kwargs = {
+        "max_length": args.max_length,
+    }
+    if args.chunks_per_transcript > 1:
+        dataset_kwargs["chunks_per_transcript"] = args.chunks_per_transcript
+        dataset_kwargs["words_per_chunk"] = args.words_per_chunk
+
+    train_ds = dataset_class(train_records, **dataset_kwargs)
+    test_ds = dataset_class(test_records, **dataset_kwargs)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size)
     return train_loader, test_loader, n_train, n_test
@@ -195,6 +211,8 @@ def train_model(args):
                 "seed": args.seed,
                 "n_train": n_train,
                 "n_test": n_test,
+                "chunks_per_transcript": args.chunks_per_transcript,
+                "words_per_chunk": args.words_per_chunk,
                 "gradual_unfreeze": args.gradual_unfreeze,
                 "history": history,
                 "best_rmse": best_rmse,
@@ -216,16 +234,26 @@ def evaluate_model(args):
     model.load_state_dict(torch.load(args.model_path, map_location=device))
     model.eval()
 
-    preds = []
-    labels = []
+    chunk_preds = []
+    chunk_labels = []
+    record_ids = []
     with torch.no_grad():
         for batch in test_loader:
             batch_preds = model(
                 batch["input_ids"].to(device),
                 batch["attention_mask"].to(device),
             )
-            preds.extend(batch_preds.cpu().numpy().tolist())
-            labels.extend(batch["label"].numpy().tolist())
+            chunk_preds.extend(batch_preds.cpu().numpy().tolist())
+            chunk_labels.extend(batch["label"].numpy().tolist())
+            record_ids.extend(batch["record_id"].numpy().tolist())
+
+    by_record = {}
+    for record_id, pred, label in zip(record_ids, chunk_preds, chunk_labels):
+        by_record.setdefault(record_id, {"preds": [], "label": label})
+        by_record[record_id]["preds"].append(pred)
+
+    preds = [float(np.mean(row["preds"])) for row in by_record.values()]
+    labels = [float(row["label"]) for row in by_record.values()]
 
     metrics = regression_metrics(preds, labels)
     signals = signal_accuracy(preds, labels, args.thresholds)
@@ -234,6 +262,7 @@ def evaluate_model(args):
         "seed": args.seed,
         "n_train": n_train,
         "n_test": n_test,
+        "chunks_per_transcript": args.chunks_per_transcript,
         "metrics": metrics,
         "signal_accuracy": signals,
         "predictions": [
@@ -269,6 +298,8 @@ def parse_args():
     parser.add_argument("--test_size", type=float, default=0.2)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument("--chunks_per_transcript", type=int, default=1)
+    parser.add_argument("--words_per_chunk", type=int, default=350)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--head_epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=2e-5)
@@ -292,4 +323,3 @@ if __name__ == "__main__":
         train_model(args)
     else:
         evaluate_model(args)
-

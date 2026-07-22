@@ -21,12 +21,29 @@ def clean_transcript(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).strip()
 
 
+def trim_pdf_boilerplate(text: str) -> str:
+    """Prefer the actual call transcript body over S&P header/estimate pages."""
+    text = clean_transcript(text)
+    starts = [
+        "Presentation Operator Message",
+        "Presentation Operator",
+        "Question and Answer",
+        "Operator",
+    ]
+    lower = text.lower()
+    for marker in starts:
+        index = lower.find(marker.lower())
+        if index != -1:
+            return text[index:]
+    return text
+
+
 def flatten_transcript(data: dict) -> str:
     """Join Alpha Vantage speaker turns into one transcript string."""
     transcript = data["transcript"]
     if isinstance(transcript, list):
         return clean_transcript(" ".join(turn.get("content", "") for turn in transcript))
-    return clean_transcript(transcript)
+    return trim_pdf_boilerplate(transcript)
 
 
 def load_records(data_dir: str) -> list:
@@ -72,8 +89,87 @@ class EarningsDataset(Dataset):
             "input_ids": encoding["input_ids"].squeeze(0),
             "attention_mask": encoding["attention_mask"].squeeze(0),
             "label": torch.tensor(record["return_pct"], dtype=torch.float),
+            "record_id": torch.tensor(record.get("_record_id", idx), dtype=torch.long),
             "symbol": record.get("symbol", ""),
             "quarter": record.get("quarter", ""),
+        }
+
+
+class ChunkedEarningsDataset(Dataset):
+    """FinBERT dataset that samples several transcript chunks per earnings call."""
+
+    def __init__(
+        self,
+        records: list,
+        tokenizer_name: str = "ProsusAI/finbert",
+        max_length: int = 512,
+        chunks_per_transcript: int = 6,
+        words_per_chunk: int = 350,
+    ):
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        self.max_length = max_length
+        self.examples = []
+
+        for fallback_id, record in enumerate(records):
+            chunks = self._make_chunks(record["transcript"], chunks_per_transcript, words_per_chunk)
+            for chunk_index, chunk in enumerate(chunks):
+                self.examples.append(
+                    {
+                        "transcript": chunk,
+                        "return_pct": record["return_pct"],
+                        "record_id": record.get("_record_id", fallback_id),
+                        "chunk_index": chunk_index,
+                        "symbol": record.get("symbol", ""),
+                        "quarter": record.get("quarter", ""),
+                    }
+                )
+
+    @staticmethod
+    def _make_chunks(text: str, chunks_per_transcript: int, words_per_chunk: int) -> list:
+        words = clean_transcript(text).split()
+        if not words:
+            return [""]
+        if len(words) <= words_per_chunk:
+            return [" ".join(words)]
+
+        max_start = max(0, len(words) - words_per_chunk)
+        if chunks_per_transcript <= 1:
+            starts = [0]
+        else:
+            starts = [
+                round(i * max_start / (chunks_per_transcript - 1))
+                for i in range(chunks_per_transcript)
+            ]
+
+        chunks = []
+        seen = set()
+        for start in starts:
+            chunk = " ".join(words[start : start + words_per_chunk])
+            if chunk and chunk not in seen:
+                chunks.append(chunk)
+                seen.add(chunk)
+        return chunks or [" ".join(words[:words_per_chunk])]
+
+    def __len__(self) -> int:
+        return len(self.examples)
+
+    def __getitem__(self, idx: int) -> dict:
+        example = self.examples[idx]
+        encoding = self.tokenizer(
+            example["transcript"],
+            max_length=self.max_length,
+            truncation=True,
+            padding="max_length",
+            return_tensors="pt",
+        )
+        return {
+            "input_ids": encoding["input_ids"].squeeze(0),
+            "attention_mask": encoding["attention_mask"].squeeze(0),
+            "label": torch.tensor(example["return_pct"], dtype=torch.float),
+            "record_id": torch.tensor(example["record_id"], dtype=torch.long),
+            "chunk_index": torch.tensor(example["chunk_index"], dtype=torch.long),
+            "symbol": example.get("symbol", ""),
+            "quarter": example.get("quarter", ""),
         }
 
 
@@ -168,4 +264,3 @@ class PriceLoader:
                     }
                 )
         return results
-

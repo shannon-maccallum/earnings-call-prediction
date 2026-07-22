@@ -108,10 +108,13 @@ python train_models.py \
   --mode train \
   --data_dir notebooks/data/pdf_transcripts \
   --output_dir checkpoints \
+  --chunks_per_transcript 6 \
   --seed 42
 ```
 
 To train on the smaller original dataset instead, use `--data_dir notebooks/data/transcripts`.
+
+The `--chunks_per_transcript 6` option is important for the PDF dataset. FinBERT can only read 512 tokens at a time, so this creates several transcript windows per earnings call and averages chunk predictions back to the call level during evaluation. Without chunking, the model mostly sees the beginning of the PDF text.
 
 The best model is saved to:
 
@@ -142,6 +145,7 @@ python train_models.py \
   --mode evaluate \
   --data_dir notebooks/data/pdf_transcripts \
   --model_path checkpoints/best_model.pt \
+  --chunks_per_transcript 6 \
   --seed 42
 ```
 
