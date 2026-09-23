@@ -127,6 +127,61 @@ def strategy_backtest(
     return rows
 
 
+def aggregate_chunk_predictions(
+    by_record: dict,
+    method: str = "mean",
+    min_chunk_signal: float = 0.0,
+) -> tuple[list[float], list[float], list[dict]]:
+    """
+    Aggregate chunk predictions back to transcript-level predictions.
+
+    Mean aggregation treats every chunk equally. Confidence-weighted aggregation
+    gives more influence to chunks whose predicted return is farther from zero,
+    which reduces the impact of boilerplate/neutral chunks. If all chunks are
+    below min_chunk_signal, the transcript prediction becomes 0.0 (HOLD).
+    """
+    preds = []
+    labels = []
+    details = []
+
+    for record_id, row in by_record.items():
+        chunk_preds = np.asarray(row["preds"], dtype=float)
+        label = float(row["label"])
+
+        if method == "mean":
+            transcript_pred = float(np.mean(chunk_preds))
+            used_chunks = int(len(chunk_preds))
+        elif method == "confidence_weighted":
+            confidence = np.abs(chunk_preds)
+            mask = confidence >= min_chunk_signal
+            if mask.any():
+                selected_preds = chunk_preds[mask]
+                selected_weights = confidence[mask]
+                transcript_pred = float(np.average(selected_preds, weights=selected_weights))
+                used_chunks = int(np.sum(mask))
+            else:
+                transcript_pred = 0.0
+                used_chunks = 0
+        else:
+            raise ValueError(f"Unknown chunk aggregation method: {method}")
+
+        preds.append(transcript_pred)
+        labels.append(label)
+        details.append(
+            {
+                "record_id": int(record_id),
+                "predicted": transcript_pred,
+                "actual": label,
+                "n_chunks": int(len(chunk_preds)),
+                "used_chunks": used_chunks,
+                "mean_abs_chunk_pred": float(np.mean(np.abs(chunk_preds))),
+                "max_abs_chunk_pred": float(np.max(np.abs(chunk_preds))),
+            }
+        )
+
+    return preds, labels, details
+
+
 def train_epoch(model, loader, optimizer, device, criterion):
     model.train()
     total_loss = 0
@@ -308,8 +363,11 @@ def evaluate_model(args):
         by_record.setdefault(record_id, {"preds": [], "label": label})
         by_record[record_id]["preds"].append(pred)
 
-    preds = [float(np.mean(row["preds"])) for row in by_record.values()]
-    labels = [float(row["label"]) for row in by_record.values()]
+    preds, labels, prediction_rows = aggregate_chunk_predictions(
+        by_record,
+        method=args.chunk_aggregation,
+        min_chunk_signal=args.min_chunk_signal,
+    )
 
     metrics = regression_metrics(preds, labels)
     signals = signal_accuracy(preds, labels, args.thresholds)
@@ -320,22 +378,23 @@ def evaluate_model(args):
         "n_train": n_train,
         "n_test": n_test,
         "chunks_per_transcript": args.chunks_per_transcript,
+        "chunk_aggregation": args.chunk_aggregation,
+        "min_chunk_signal": args.min_chunk_signal,
         "metrics": metrics,
         "signal_accuracy": signals,
         "strategy_backtest": strategy,
         "predictions": [
             {
-                "predicted": float(pred),
-                "actual": float(label),
-                "predicted_signal_0.5": signal(pred, 0.5),
-                "actual_signal_0.5": signal(label, 0.5),
+                **row,
+                "predicted_signal_0.5": signal(row["predicted"], 0.5),
+                "actual_signal_0.5": signal(row["actual"], 0.5),
                 "strategy_return_0.5": float(
-                    label if signal(pred, 0.5) == "BUY"
-                    else -label if signal(pred, 0.5) == "SELL"
+                    row["actual"] if signal(row["predicted"], 0.5) == "BUY"
+                    else -row["actual"] if signal(row["predicted"], 0.5) == "SELL"
                     else 0.0
                 ),
             }
-            for pred, label in zip(preds, labels)
+            for row in prediction_rows
         ],
     }
 
@@ -346,7 +405,23 @@ def evaluate_model(args):
             json.dump(results, f, indent=2)
         print(f"Saved evaluation to {output_path}")
 
-    print(json.dumps({k: results[k] for k in ["seed", "n_train", "n_test", "metrics"]}, indent=2))
+    print(
+        json.dumps(
+            {
+                k: results[k]
+                for k in [
+                    "seed",
+                    "n_train",
+                    "n_test",
+                    "chunks_per_transcript",
+                    "chunk_aggregation",
+                    "min_chunk_signal",
+                    "metrics",
+                ]
+            },
+            indent=2,
+        )
+    )
     print("Signal accuracy:")
     for row in signals:
         print(
@@ -378,6 +453,25 @@ def parse_args():
     parser.add_argument("--max_length", type=int, default=512)
     parser.add_argument("--chunks_per_transcript", type=int, default=1)
     parser.add_argument("--words_per_chunk", type=int, default=350)
+    parser.add_argument(
+        "--chunk_aggregation",
+        choices=["mean", "confidence_weighted"],
+        default="mean",
+        help=(
+            "How to aggregate chunk predictions to one transcript prediction. "
+            "confidence_weighted discounts chunks with predicted returns near zero."
+        ),
+    )
+    parser.add_argument(
+        "--min_chunk_signal",
+        type=float,
+        default=0.0,
+        help=(
+            "For confidence_weighted aggregation, ignore chunks whose absolute "
+            "predicted return is below this threshold. If all chunks are ignored, "
+            "the transcript prediction is 0/HOLD."
+        ),
+    )
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--head_epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=2e-5)

@@ -158,6 +158,21 @@ To train on the FMP API dataset, use `--data_dir notebooks/data/fmp_model_ready`
 
 The `--chunks_per_transcript 6` option is important for the PDF dataset. FinBERT can only read 512 tokens at a time, so this creates several transcript windows per earnings call and averages chunk predictions back to the call level during evaluation. Without chunking, the model mostly sees the beginning of the PDF text.
 
+For evaluation, chunk predictions can be averaged normally or aggregated with confidence weighting. Confidence weighting reduces the impact of boilerplate chunks whose predictions are near zero:
+
+```bash
+python train_models.py \
+  --mode evaluate \
+  --data_dir notebooks/data/fmp_model_ready \
+  --model_path checkpoints_fmp/best_model.pt \
+  --chunks_per_transcript 6 \
+  --chunk_aggregation confidence_weighted \
+  --min_chunk_signal 0.25 \
+  --seed 42
+```
+
+If every chunk in a transcript is below `--min_chunk_signal`, the transcript prediction becomes Hold.
+
 The best model is saved to:
 
 ```text
