@@ -71,6 +71,62 @@ def signal_accuracy(
     return rows
 
 
+def strategy_backtest(
+    preds: Iterable[float],
+    labels: Iterable[float],
+    thresholds: Iterable[float] = (0.5, 1.0, 2.0, 3.0),
+) -> List[Dict[str, float]]:
+    """
+    Evaluate the intended post-earnings trading rule.
+
+    The model observes only the earnings-call transcript and predicts a return.
+    That prediction is converted into a signal:
+        BUY  if predicted return > +threshold
+        SELL if predicted return < -threshold
+        HOLD otherwise
+
+    The label is the actual stock return over the next 3 trading days. Strategy
+    return is:
+        BUY  -> actual 3-day return
+        SELL -> negative actual 3-day return, equivalent to a short position
+        HOLD -> 0
+    """
+    pred_arr = np.asarray(list(preds), dtype=float)
+    label_arr = np.asarray(list(labels), dtype=float)
+    rows = []
+
+    for threshold in thresholds:
+        signals = np.asarray([signal(pred, threshold) for pred in pred_arr])
+        positions = np.where(signals == "BUY", 1.0, np.where(signals == "SELL", -1.0, 0.0))
+        strategy_returns = positions * label_arr
+        traded = positions != 0
+
+        if traded.any():
+            trade_win_rate = float(np.mean(strategy_returns[traded] > 0))
+            mean_trade_return = float(np.mean(strategy_returns[traded]))
+        else:
+            trade_win_rate = 0.0
+            mean_trade_return = 0.0
+
+        compounded_return = float((np.prod(1 + strategy_returns / 100.0) - 1) * 100.0)
+
+        rows.append(
+            {
+                "threshold": float(threshold),
+                "buy_count": int(np.sum(signals == "BUY")),
+                "sell_count": int(np.sum(signals == "SELL")),
+                "hold_count": int(np.sum(signals == "HOLD")),
+                "trade_count": int(np.sum(traded)),
+                "trade_win_rate": trade_win_rate,
+                "mean_strategy_return": float(np.mean(strategy_returns)),
+                "mean_trade_return": mean_trade_return,
+                "compounded_strategy_return": compounded_return,
+            }
+        )
+
+    return rows
+
+
 def train_epoch(model, loader, optimizer, device, criterion):
     model.train()
     total_loss = 0
@@ -257,6 +313,7 @@ def evaluate_model(args):
 
     metrics = regression_metrics(preds, labels)
     signals = signal_accuracy(preds, labels, args.thresholds)
+    strategy = strategy_backtest(preds, labels, args.thresholds)
     results = {
         "model_path": args.model_path,
         "seed": args.seed,
@@ -265,8 +322,19 @@ def evaluate_model(args):
         "chunks_per_transcript": args.chunks_per_transcript,
         "metrics": metrics,
         "signal_accuracy": signals,
+        "strategy_backtest": strategy,
         "predictions": [
-            {"predicted": float(pred), "actual": float(label)}
+            {
+                "predicted": float(pred),
+                "actual": float(label),
+                "predicted_signal_0.5": signal(pred, 0.5),
+                "actual_signal_0.5": signal(label, 0.5),
+                "strategy_return_0.5": float(
+                    label if signal(pred, 0.5) == "BUY"
+                    else -label if signal(pred, 0.5) == "SELL"
+                    else 0.0
+                ),
+            }
             for pred, label in zip(preds, labels)
         ],
     }
@@ -284,6 +352,16 @@ def evaluate_model(args):
         print(
             f"  +/-{row['threshold']:.1f}%: "
             f"{row['correct']}/{row['total']} = {row['accuracy']:.2f}"
+        )
+    print("3-day trading strategy backtest:")
+    for row in strategy:
+        print(
+            f"  +/-{row['threshold']:.1f}%: "
+            f"BUY/SELL/HOLD={row['buy_count']}/{row['sell_count']}/{row['hold_count']} | "
+            f"trades={row['trade_count']} | "
+            f"win rate={row['trade_win_rate']:.2f} | "
+            f"mean strategy return={row['mean_strategy_return']:.2f}% | "
+            f"compounded={row['compounded_strategy_return']:.2f}%"
         )
 
 # make able to be run in terminal

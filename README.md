@@ -2,7 +2,7 @@
 
 **Shannon Maccallum | Intro to Deep Learning | University of Oregon**
 
-This project tests whether language from earnings call transcripts can predict a stock's short-term post-earnings return. The model reads transcript text and predicts the stock's 3-trading-day return percentage. The prediction can also be converted into a simple Buy, Sell, or Hold signal.
+This project tests whether language from earnings call transcripts can predict a stock's short-term post-earnings return. The model reads transcript text on the earnings-call date and predicts the stock's 3-trading-day return percentage. The prediction is converted into a simple Buy, Sell, or Hold signal and evaluated against what the stock actually did over the next 3 trading days.
 
 The main conclusion is cautious: FinBERT can be fine-tuned for this task, but the dataset is small, so results vary a lot depending on the train/test split. The best observed split looked strong, but the result is not stable enough to claim reliable trading performance.
 
@@ -50,7 +50,7 @@ Contains training and evaluation helpers:
 - reproducible train/test splitting
 - gradual unfreezing training loop
 - checkpoint saving
-- MAE, RMSE, bias, directional accuracy, and Buy/Sell/Hold signal accuracy
+- MAE, RMSE, bias, directional accuracy, Buy/Sell/Hold signal accuracy, and a 3-day trading-strategy backtest
 
 `scripts/build_pdf_dataset.py`
 
@@ -97,6 +97,22 @@ The target variable is:
 
 ```text
 return_pct = (close_price_day3 - close_price_day0) / close_price_day0 * 100
+```
+
+The trading signal is created from the model's predicted return:
+
+```text
+predicted_return > +0.5%  -> BUY
+predicted_return < -0.5%  -> SELL
+otherwise                 -> HOLD
+```
+
+The 3-day strategy return is then:
+
+```text
+BUY  -> actual 3-day stock return
+SELL -> negative actual 3-day stock return, equivalent to a short position
+HOLD -> 0% return
 ```
 
 ## Training
@@ -148,6 +164,13 @@ python train_models.py \
   --chunks_per_transcript 6 \
   --seed 42
 ```
+
+Evaluation reports both signal accuracy and the event-driven trading backtest:
+
+- `Signal Accuracy`: whether the predicted Buy/Sell/Hold signal matches the actual 3-day outcome label.
+- `Trade Win Rate`: among non-Hold predictions, whether the long/short trade made money after 3 trading days.
+- `Mean Strategy Return`: average return across all test calls, with Hold counted as 0%.
+- `Compounded Strategy Return`: compounded return from following every test signal in sequence.
 
 ## Results
 
