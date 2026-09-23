@@ -16,6 +16,7 @@ models.py
 train_models.py
 scripts/
   build_pdf_dataset.py
+  build_fmp_dataset.py
 notebooks/
   data collection.ipynb
   data_demo.ipynb
@@ -56,6 +57,10 @@ Contains training and evaluation helpers:
 
 Converts the cleaned quarterly earnings-call PDF archive into the same JSON format used by the model. It extracts transcript text from each PDF, reads the fiscal quarter and call date from the normalized filename/header, and uses Yahoo Finance to compute the 3-trading-day `return_pct` label.
 
+`scripts/build_fmp_dataset.py`
+
+Pulls earnings call transcripts directly from the Financial Modeling Prep API, labels each call with a 3-trading-day return from FMP historical prices, validates transcript dates, and writes model-ready JSON records.
+
 `notebooks/evaluation.ipynb`
 
 Loads a trained checkpoint, evaluates it on the held-out test split, and creates the final result charts.
@@ -84,6 +89,25 @@ python scripts/build_pdf_dataset.py \
 ```
 
 On Talapas, replace `--pdf_root` with the location where you copied the cleaned PDF archive.
+
+To build the dataset directly from FMP instead, put your key in `.env` or the shell environment:
+
+```bash
+export FMP_API_KEY=your_key_here
+```
+
+Then run:
+
+```bash
+python scripts/build_fmp_dataset.py \
+  --output_dir notebooks/data/fmp_model_ready \
+  --start_year 2010 \
+  --end_year 2025 \
+  --max_records 3000 \
+  --return_window 3
+```
+
+This produces the same JSON format as the PDF conversion script, so training only needs a different `--data_dir`.
 
 Each JSON file contains:
 
@@ -129,6 +153,8 @@ python train_models.py \
 ```
 
 To train on the smaller original dataset instead, use `--data_dir notebooks/data/transcripts`.
+
+To train on the FMP API dataset, use `--data_dir notebooks/data/fmp_model_ready`.
 
 The `--chunks_per_transcript 6` option is important for the PDF dataset. FinBERT can only read 512 tokens at a time, so this creates several transcript windows per earnings call and averages chunk predictions back to the call level during evaluation. Without chunking, the model mostly sees the beginning of the PDF text.
 
